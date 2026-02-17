@@ -90,7 +90,8 @@ impl Phi3RotaryEmbedding {
         // Handle overflow if pos + seq_len > max?
         let cos = self.cos.narrow(0, pos, seq_len)?;
         let sin = self.sin.narrow(0, pos, seq_len)?;
-        candle_nn::rotary_emb::rope(x, &cos, &sin)
+        unsloth_rs::kernels::rope_cubecl(x, &cos, &sin)
+            .map_err(|e| candle_core::Error::Msg(e.to_string()))
     }
 }
 
@@ -226,7 +227,6 @@ impl Phi3Attention {
 pub struct Phi3MLP {
     gate_up_proj: AdapterLayer, // Fused gate_up
     down_proj: AdapterLayer,
-    act_fn: Activation,
     intermediate_size: usize,
 }
 
@@ -241,7 +241,6 @@ impl Phi3MLP {
         Ok(Self {
             gate_up_proj,
             down_proj,
-            act_fn: Activation::Silu,
             intermediate_size, // store for splitting
         })
     }
@@ -251,8 +250,9 @@ impl Phi3MLP {
         let gate = gate_up.narrow(candle_core::D::Minus1, 0, self.intermediate_size)?;
         let up = gate_up.narrow(candle_core::D::Minus1, self.intermediate_size, self.intermediate_size)?;
         
-        let lhs = gate.apply(&self.act_fn)?;
-        self.down_proj.forward(&(lhs * up)?)
+        let swiglu = unsloth_rs::kernels::swiglu_cubecl(&gate, &up)
+            .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+        self.down_proj.forward(&swiglu)
     }
 }
 

@@ -89,7 +89,7 @@ impl Qwen2MoeMLP {
              let down_proj = AdapterLayer::Linear(down_proj);
              
              experts.push(Qwen2MLP {
-                 gate_proj, up_proj, down_proj, act_fn: Activation::Silu
+                 gate_proj, up_proj, down_proj
              });
         }
         
@@ -102,7 +102,6 @@ impl Qwen2MoeMLP {
              gate_proj: AdapterLayer::Linear(gate_proj_s),
              up_proj: AdapterLayer::Linear(up_proj_s),
              down_proj: AdapterLayer::Linear(down_proj_s),
-             act_fn: Activation::Silu,
         };
 
         Ok(Self {

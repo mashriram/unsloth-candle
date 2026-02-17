@@ -1,7 +1,7 @@
 use candle_core::{DType, Device, Result, Tensor, Module, Var};
-use candle_nn::{Activation, VarBuilder, RmsNorm, VarMap};
+use candle_nn::{Activation, VarBuilder, VarMap};
 use crate::model::llama::{Cache}; 
-use crate::model::layers::AdapterLayer;
+use crate::model::layers::{AdapterLayer, UnslothRmsNorm};
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Config {
@@ -70,7 +70,8 @@ impl RotaryEmbedding {
         let (_b, _s, _h, _d) = x.dims4()?;
         let cos = self.cos.narrow(0, pos, seq_len)?;
         let sin = self.sin.narrow(0, pos, seq_len)?;
-        candle_nn::rotary_emb::rope(x, &cos, &sin)
+        unsloth_rs::kernels::rope_cubecl(x, &cos, &sin)
+            .map_err(|e| candle_core::Error::Msg(e.to_string()))
     }
 }
 
@@ -191,7 +192,6 @@ pub struct Qwen2MLP {
     pub gate_proj: AdapterLayer,
     pub up_proj: AdapterLayer,
     pub down_proj: AdapterLayer,
-    pub act_fn: Activation,
 }
 
 impl Qwen2MLP {
@@ -207,29 +207,30 @@ impl Qwen2MLP {
             gate_proj,
             up_proj,
             down_proj,
-            act_fn: Activation::Silu,
         })
     }
 
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let lhs = self.gate_proj.forward(x)?.apply(&self.act_fn)?;
-        let rhs = self.up_proj.forward(x)?;
-        self.down_proj.forward(&(lhs * rhs)?)
+        let gate = self.gate_proj.forward(x)?;
+        let up = self.up_proj.forward(x)?;
+        let swiglu = unsloth_rs::kernels::swiglu_cubecl(&gate, &up)
+            .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+        self.down_proj.forward(&swiglu)
     }
 }
 
 pub struct Qwen2Block {
     attn: Qwen2Attention,
     mlp: Qwen2MLP,
-    input_layernorm: RmsNorm,
-    post_attention_layernorm: RmsNorm,
+    input_layernorm: UnslothRmsNorm,
+    post_attention_layernorm: UnslothRmsNorm,
 }
 
 impl Qwen2Block {
     fn load(vb: VarBuilder, cfg: &Config) -> Result<Self> {
-        let input_layernorm = RmsNorm::new(vb.pp("input_layernorm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
+        let input_layernorm = UnslothRmsNorm::new(vb.pp("input_layernorm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
         let attn = Qwen2Attention::load(vb.pp("self_attn"), cfg)?;
-        let post_attention_layernorm = RmsNorm::new(vb.pp("post_attention_layernorm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
+        let post_attention_layernorm = UnslothRmsNorm::new(vb.pp("post_attention_layernorm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
         let mlp = Qwen2MLP::load(vb.pp("mlp"), cfg)?;
         
         Ok(Self {
@@ -257,7 +258,7 @@ impl Qwen2Block {
 pub struct Qwen2 {
     pub embed_tokens: candle_nn::Embedding,
     pub layers: Vec<Qwen2Block>,
-    pub norm: RmsNorm,
+    pub norm: UnslothRmsNorm,
     pub lm_head: AdapterLayer,
 }
 
@@ -268,7 +269,7 @@ impl Qwen2 {
         for i in 0..cfg.num_hidden_layers {
             layers.push(Qwen2Block::load(vb.pp(&format!("model.layers.{}", i)), cfg)?);
         }
-        let norm = RmsNorm::new(vb.pp("model.norm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
+        let norm = UnslothRmsNorm::new(vb.pp("model.norm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
         let lm_head = linear(cfg.hidden_size, cfg.vocab_size, vb.pp("lm_head"))?;
         
         Ok(Self {

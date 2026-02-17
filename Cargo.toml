@@ -7,7 +7,7 @@ edition = "2021"
 
 [lib]
 name = "unsloth_candle"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pyo3 = { version = "0.23.0", features = ["extension-module"] }
@@ -24,9 +24,14 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 candle-flash-attn = { version = "0.8.2", optional = true }
 
+unsloth-rs = { path = "./unsloth-rs" }
+cubecl = { version = "0.9.0" }
+cubecl-cuda = { version = "0.9.0", optional = true }
+bytemuck = { version = "1.21", features = ["derive"] }
+
 [features]
 default = []
-cuda = ["candle-core/cuda", "dep:cudarc", "dep:candle-flash-attn"]
+cuda = ["candle-core/cuda", "dep:cudarc", "dep:candle-flash-attn", "unsloth-rs/cuda"]
 metal = ["candle-core/metal"]
 flash-attn = ["cuda", "dep:candle-flash-attn"]
 

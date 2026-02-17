@@ -2,9 +2,9 @@ use pyo3::prelude::*;
 use candle_core::{Device, Tensor};
 use std::sync::{Arc, Mutex};
 
-mod core;
-mod kernels;
-mod model;
+pub mod core;
+pub mod kernels;
+pub mod model;
 // model/mod.rs is loaded as `model` module in crate root?
 // Yes, `mod model;` looks for `model.rs` OR `model/mod.rs`.
 // So path remains `crate::model::RustModel`.
@@ -23,15 +23,24 @@ impl FastLanguageModel {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (model_name, max_seq_length=None, load_in_4bit=None))]
-    fn from_pretrained(model_name: &str, max_seq_length: Option<usize>, load_in_4bit: Option<bool>) -> PyResult<Self> {
+    #[pyo3(signature = (model_name, max_seq_length=None, load_in_4bit=None, gradient_checkpointing=None))]
+    fn from_pretrained(
+        model_name: &str, 
+        max_seq_length: Option<usize>, 
+        load_in_4bit: Option<bool>, 
+        gradient_checkpointing: Option<bool>
+    ) -> PyResult<Self> {
         println!("Loading {}...", model_name);
         
         let device = Device::cuda_if_available(0).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         println!("Using device: {:?}", device);
         
-        let model = core::loader::load_model(model_name, load_in_4bit.unwrap_or(false), &device)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let model = core::loader::load_model(
+            model_name, 
+            load_in_4bit.unwrap_or(false), 
+            gradient_checkpointing.unwrap_or(false),
+            &device
+        ).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             
         Ok(FastLanguageModel { inner: Some(Arc::new(Mutex::new(model))) })
     }

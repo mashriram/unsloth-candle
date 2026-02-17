@@ -1,7 +1,7 @@
 use candle_core::{DType, Device, Result, Tensor, Var};
 use candle_nn::VarMap;
 
-use crate::model::llama::{Llama, Cache, Config as LlamaConfig};
+pub use crate::model::llama::{Llama, Cache, Config as LlamaConfig};
 use crate::model::mixtral::MixtralModel;
 use crate::model::qwen2::Qwen2Model;
 use crate::model::qwen2_vl::Qwen2VLModel;
@@ -13,6 +13,7 @@ use crate::model::phi3::Phi3Model;
 use crate::model::llava::LlavaModel;
 
 pub mod layers;
+pub mod linear4bit;
 pub mod llama;
 pub mod mixtral; 
 pub mod qwen2;
@@ -25,7 +26,7 @@ pub mod gpt_neox;
 pub mod cohere;
 pub mod qwen2_moe;
 
-use self::layers::{AdapterLayer, LoRALinear, DoRALinear};
+pub use self::layers::{AdapterLayer, LoRALinear, DoRALinear};
 
 pub enum RustModel {
     Llama(LlamaModel),
@@ -186,36 +187,48 @@ impl LlamaModel {
 }
 
 pub fn inject_lora(layer: &mut AdapterLayer, rank: usize, scaling: f64, varmap: &mut VarMap, device: &Device, dtype: DType, prefix: String, use_dora: bool) -> Result<()> {
-    match layer {
+    // Check if we can apply LoRA
+    let (out_dim, in_dim) = match layer {
         AdapterLayer::Linear(l) => {
-            let weight = l.weight(); 
-            let (out_dim, in_dim) = weight.dims2()?;
-            
-             let lora_a = varmap.get((rank, in_dim), &format!("{}.lora_a", prefix), candle_nn::init::DEFAULT_KAIMING_NORMAL, dtype, device)?;
-             let lora_b = varmap.get((out_dim, rank), &format!("{}.lora_b", prefix), candle_nn::init::ZERO, dtype, device)?;
-             
-             if use_dora {
-                 let w = l.weight(); // [out, in]
-                 let m_init = w.sqr()?.sum_keepdim(1)?.sqrt()?.flatten_all()?;
-                 
-                 let m_name = format!("{}.lora_magnitude_vector", prefix);
-                 {
-                     let mut data = varmap.data().lock().unwrap();
-                     if !data.contains_key(&m_name) {
-                         let m_var = Var::from_tensor(&m_init)?;
-                         data.insert(m_name.clone(), m_var);
-                     }
-                 }
-                 let m = varmap.get((out_dim,), &m_name, candle_nn::init::ZERO, dtype, device)?; 
-                 
-                 let new_layer = DoRALinear::new(l.clone(), lora_a, lora_b, m, scaling);
-                 *layer = AdapterLayer::DoRA(new_layer);
-             } else {
-                 let new_layer = LoRALinear::new(l.clone(), lora_a, lora_b, scaling);
-                 *layer = AdapterLayer::LoRA(new_layer);
-             }
+            let w = l.weight();
+            w.dims2()?
+        },
+        AdapterLayer::Linear4bit(l) => {
+            (l.out_features, l.in_features) // No need to dequantize just for dims
+        },
+        _ => return Ok(()), // Already LoRA or other
+    };
+
+    let lora_a = varmap.get((rank, in_dim), &format!("{}.lora_a", prefix), candle_nn::init::DEFAULT_KAIMING_NORMAL, dtype, device)?;
+    let lora_b = varmap.get((out_dim, rank), &format!("{}.lora_b", prefix), candle_nn::init::ZERO, dtype, device)?;
+    
+    // We need to clone the current layer to wrap it.
+    // layer is &mut AdapterLayer. We can clone it.
+    let base_layer = layer.clone();
+
+    if use_dora {
+        // DoRA needs magnitude vector initialization.
+        // We need dequantized weights for this!
+        let w = base_layer.get_weight_f32()?; // Uses our new helper
+        let m_init = w.sqr()?.sum_keepdim(1)?.sqrt()?.flatten_all()?;
+        
+        let m_name = format!("{}.lora_magnitude_vector", prefix);
+        {
+            let mut data = varmap.data().lock().unwrap();
+            if !data.contains_key(&m_name) {
+                let m_var = Var::from_tensor(&m_init)?;
+                data.insert(m_name.clone(), m_var);
+            }
         }
-        _ => {} 
+        let m = varmap.get((out_dim,), &m_name, candle_nn::init::ZERO, dtype, device)?; 
+        
+        // Construct DoRA
+        let new_layer = DoRALinear::new(base_layer, lora_a, lora_b, m, scaling);
+        *layer = AdapterLayer::DoRA(new_layer);
+    } else {
+        // Construct LoRA
+        let new_layer = LoRALinear::new(base_layer, lora_a, lora_b, scaling);
+        *layer = AdapterLayer::LoRA(new_layer);
     }
     Ok(())
 }

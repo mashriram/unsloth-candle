@@ -71,7 +71,8 @@ impl RotaryEmbedding {
         let (_b, s, _h, _d) = x.dims4()?;
         let cos = self.cos.narrow(0, pos, seq_len)?;
         let sin = self.sin.narrow(0, pos, seq_len)?;
-        candle_nn::rotary_emb::rope(x, &cos, &sin)
+        unsloth_rs::kernels::rope_cubecl(x, &cos, &sin)
+            .map_err(|e| candle_core::Error::Msg(e.to_string()))
     }
 }
 
@@ -192,7 +193,6 @@ pub struct MixtralMLP {
     pub w1: AdapterLayer,
     pub w2: AdapterLayer,
     pub w3: AdapterLayer,
-    pub act_fn: Activation,
 }
 
 impl MixtralMLP {
@@ -208,14 +208,15 @@ impl MixtralMLP {
             w1,
             w2,
             w3,
-            act_fn: Activation::Silu,
         })
     }
 
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let lhs = self.w1.forward(x)?.apply(&self.act_fn)?;
-        let rhs = self.w3.forward(x)?;
-        self.w2.forward(&(lhs * rhs)?)
+        let gate = self.w1.forward(x)?;
+        let up = self.w3.forward(x)?;
+        let swiglu = unsloth_rs::kernels::swiglu_cubecl(&gate, &up)
+            .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+        self.w2.forward(&swiglu)
     }
 }
 

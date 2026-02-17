@@ -94,7 +94,8 @@ impl RotaryEmbedding {
         let (_b, _s, _h, _d) = x.dims4()?;
         let cos = self.cos.narrow(0, pos, seq_len)?;
         let sin = self.sin.narrow(0, pos, seq_len)?;
-        candle_nn::rotary_emb::rope(x, &cos, &sin)
+        unsloth_rs::kernels::rope_cubecl(x, &cos, &sin)
+            .map_err(|e| candle_core::Error::Msg(e.to_string()))
     }
 }
 

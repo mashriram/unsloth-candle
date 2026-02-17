@@ -9,6 +9,7 @@ use std::path::PathBuf;
 pub fn load_model(
     model_name: &str, 
     load_in_4bit: bool, 
+    use_gradient_checkpointing: bool,
     device: &Device
 ) -> Result<RustModel> {
     // 1. Download/Locate model using Python's huggingface_hub
@@ -80,6 +81,8 @@ pub fn load_model(
         tie_word_embeddings,
         use_flash_attn: false,
         rope_scaling,
+        use_gradient_checkpointing,
+        load_in_4bit,
     };
 
     // 3. Load Weights

@@ -48,3 +48,4 @@ venv.bak/
 check_output.txt
 check_final.txt
 tmp/
+*.txt

@@ -1,5 +1,7 @@
 use candle_core::{DType, Device, Result, Tensor, Module};
-use candle_nn::{Embedding, VarBuilder, Activation, RmsNorm, VarMap};
+use candle_nn::{Embedding, VarBuilder, Activation, VarMap};
+
+
 // use candle_transformers::models::llama::Config; // Use local config
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -18,15 +20,22 @@ pub struct Config {
     pub tie_word_embeddings: bool,
     pub use_flash_attn: bool,
     pub rope_scaling: Option<(String, f64)>,
+    pub use_gradient_checkpointing: bool,
+    pub load_in_4bit: bool,
 }
 
-use crate::model::layers::AdapterLayer;
+use crate::model::layers::{AdapterLayer, UnslothRmsNorm};
 
 // Helper to create Linear layer (no bias usually for Llama)
-fn linear(size1: usize, size2: usize, vb: VarBuilder) -> Result<AdapterLayer> {
+fn linear(size1: usize, size2: usize, vb: VarBuilder, cfg: &Config) -> Result<AdapterLayer> {
     let weight = vb.get((size2, size1), "weight")?;
-    let l = candle_nn::Linear::new(weight, None);
-    Ok(AdapterLayer::Linear(l))
+    if cfg.load_in_4bit {
+        let l = crate::model::linear4bit::Linear4bit::from_tensor(&weight, 64)?; // Block size 64 hardcoded for now
+        Ok(AdapterLayer::Linear4bit(l))
+    } else {
+        let l = candle_nn::Linear::new(weight, None);
+        Ok(AdapterLayer::Linear(l))
+    }
 }
 
 #[derive(Clone)]
@@ -86,7 +95,8 @@ impl RotaryEmbedding {
         let (_b, _s, _h, _d) = x.dims4()?;
         let cos = self.cos.narrow(0, pos, seq_len)?;
         let sin = self.sin.narrow(0, pos, seq_len)?;
-        candle_nn::rotary_emb::rope(x, &cos, &sin)
+        unsloth_rs::kernels::rope_cubecl(x, &cos, &sin)
+            .map_err(|e| candle_core::Error::Msg(e.to_string()))
     }
 }
 
@@ -108,10 +118,10 @@ impl CausalSelfAttention {
         let size_q = (cfg.hidden_size / cfg.num_attention_heads) * cfg.num_attention_heads;
         let size_kv = (cfg.hidden_size / cfg.num_attention_heads) * cfg.num_key_value_heads;
         
-        let q_proj = linear(size_in, size_q, vb.pp("q_proj"))?;
-        let k_proj = linear(size_in, size_kv, vb.pp("k_proj"))?;
-        let v_proj = linear(size_in, size_kv, vb.pp("v_proj"))?;
-        let o_proj = linear(size_q, size_in, vb.pp("o_proj"))?;
+        let q_proj = linear(size_in, size_q, vb.pp("q_proj"), cfg)?;
+        let k_proj = linear(size_in, size_kv, vb.pp("k_proj"), cfg)?;
+        let v_proj = linear(size_in, size_kv, vb.pp("v_proj"), cfg)?;
+        let o_proj = linear(size_q, size_in, vb.pp("o_proj"), cfg)?;
         
         let head_dim = cfg.hidden_size / cfg.num_attention_heads;
         let rotary_emb = RotaryEmbedding::new(vb.dtype(), cfg, vb.device())?;
@@ -203,11 +213,11 @@ impl CausalSelfAttention {
     }
 }
 
+#[derive(Clone)]
 pub struct Mlp {
     pub gate_proj: AdapterLayer,
     pub up_proj: AdapterLayer,
     pub down_proj: AdapterLayer,
-    pub act_fn: Activation,
 }
 
 impl Mlp {
@@ -215,38 +225,39 @@ impl Mlp {
         let hidden_size = cfg.hidden_size;
         let intermediate_size = cfg.intermediate_size;
         
-        let gate_proj = linear(hidden_size, intermediate_size, vb.pp("gate_proj"))?;
-        let up_proj = linear(hidden_size, intermediate_size, vb.pp("up_proj"))?;
-        let down_proj = linear(intermediate_size, hidden_size, vb.pp("down_proj"))?;
+        let gate_proj = linear(hidden_size, intermediate_size, vb.pp("gate_proj"), cfg)?;
+        let up_proj = linear(hidden_size, intermediate_size, vb.pp("up_proj"), cfg)?;
+        let down_proj = linear(intermediate_size, hidden_size, vb.pp("down_proj"), cfg)?;
         
         Ok(Self {
             gate_proj,
             up_proj,
             down_proj,
-            act_fn: Activation::Silu,
         })
     }
 
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let lhs = self.gate_proj.forward(x)?.apply(&self.act_fn)?;
-        let rhs = self.up_proj.forward(x)?;
-        self.down_proj.forward(&(lhs * rhs)?)
+        let gate = self.gate_proj.forward(x)?;
+        let up = self.up_proj.forward(x)?;
+        let swiglu = unsloth_rs::kernels::swiglu_cubecl(&gate, &up)
+            .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+        self.down_proj.forward(&swiglu)
     }
 }
 
 pub struct Block {
-    pub rms_1: RmsNorm,
+    pub rms_1: UnslothRmsNorm,
     pub attn: CausalSelfAttention,
-    pub rms_2: RmsNorm,
+    pub rms_2: UnslothRmsNorm,
     pub mlp: Mlp,
 }
 
 
 impl Block {
     fn load(vb: VarBuilder, cfg: &Config) -> Result<Self> {
-        let rms_1 = RmsNorm::new(vb.pp("input_layernorm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
+        let rms_1 = UnslothRmsNorm::new(vb.pp("input_layernorm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
         let attn = CausalSelfAttention::load(vb.pp("self_attn"), cfg)?;
-        let rms_2 = RmsNorm::new(vb.pp("post_attention_layernorm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
+        let rms_2 = UnslothRmsNorm::new(vb.pp("post_attention_layernorm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
         let mlp = Mlp::load(vb.pp("mlp"), cfg)?;
         Ok(Self { rms_1, attn, rms_2, mlp })
     }
@@ -259,7 +270,61 @@ impl Block {
         
         let residual = &x;
         let x = self.rms_2.forward(&x)?;
+        
+        // Checkpointing for MLP
+        // We capture the necessary parts for MLP forward in a closure
+        // Note: MLP forward only depends on `x`.
+        // However, `checkpoint` function takes `x` and a closure `f(x)`.
+        // The closure must be Send + Sync + 'static (ish).
+        // `self.mlp` is a reference, so we can't move it easily unless we clone or use Arc.
+        // `Mlp` contains `AdapterLayer`s which are likely clone-able (Linear is Arc-ed?).
+        // Let's check AdapterLayer cloneability. It should be cheap.
+        
+        // TODO: For now, we apply checkpointing only if a config flag is set? 
+        // Or we expose a method `forward_checkpointed`?
+        // User asked to "Implement Gradient Checkpointing".
+        // Let's add a `use_gradient_checkpointing` flag to Config or similar?
+        // For now, let's just implement the logic in a way that can be toggled or used.
+        // Since we don't have a flag yet, I'll add a comment and maybe a `forward_with_checkpointing` method?
+        // Or just replace the MLP call for now to test it.
+        // Wait, checkpointing usually wraps the whole block or large parts.
+        // Wrapping just MLP is okay. Wrapping Attention + MLP is better.
+        // But Attention has side effects (KV Cache).
+        // Gradient Checkpointing with KV Cache is tricky because the cache update happens in forward.
+        // If we re-run forward, we might double-update cache?
+        // Usually, for checkpointing, we don't checkpoint the Attention part with KV cache update, 
+        // OR we ensure the cache update is idempotent / ignored in re-computation.
+        // But `candle` KV cache is passed as `&mut Cache`.
+        // If we re-run, we seek `&mut Cache`.
+        // This is unsafe/hard with standard closures.
+        
+        // Strategy: Only checkpoint the MLP part for now. It's stateless.
+        
+        // let mlp = self.mlp.clone(); // Assuming Mlp is Clone (AdapterLayer is Clone?)
+        // let x_out = crate::core::checkpoint::checkpoint(Arc::new(move |t| mlp.forward(t)), &x)?;
+        
         let x = self.mlp.forward(&x)?;
+        let x = (x + residual)?;
+        Ok(x)
+    }
+
+    pub fn forward_checkpointed(&self, x: &Tensor, pos: usize, cache: &mut Cache, layer_idx: usize) -> Result<Tensor> {
+        let residual = x;
+        let x = self.rms_1.forward(x)?;
+        let x = self.attn.forward(&x, pos, cache, layer_idx)?;
+        let x = (x + residual)?;
+        
+        let residual = &x;
+        let x = self.rms_2.forward(&x)?;
+        
+        // Gradient Checkpointing for MLP
+        // We move a clone of MLP (cheap, just Arc tensors) into the closure.
+        let mlp = self.mlp.clone();
+        let x = crate::core::checkpoint::checkpoint(
+            std::sync::Arc::new(move |t| mlp.forward(t)), 
+            &x
+        )?;
+        
         let x = (x + residual)?;
         Ok(x)
     }
@@ -268,10 +333,11 @@ impl Block {
 pub struct Llama {
     pub embed_tokens: Embedding,
     pub layers: Vec<Block>,
-    pub norm: RmsNorm,
+    pub norm: UnslothRmsNorm,
     pub lm_head: AdapterLayer,
     pub device: Device,
     pub dtype: DType,
+    pub use_gradient_checkpointing: bool,
 }
 
 impl Llama {
@@ -281,14 +347,14 @@ impl Llama {
         for i in 0..cfg.num_hidden_layers {
             layers.push(Block::load(vb.pp(&format!("model.layers.{}", i)), cfg)?);
         }
-        let norm = RmsNorm::new(vb.pp("model.norm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
+        let norm = UnslothRmsNorm::new(vb.pp("model.norm").get(cfg.hidden_size, "weight")?, cfg.rms_norm_eps);
         
         let lm_head = if cfg.tie_word_embeddings {
              let weight = embed_tokens.embeddings().clone();
              let l = candle_nn::Linear::new(weight, None);
              AdapterLayer::Linear(l)
         } else {
-             linear(cfg.hidden_size, cfg.vocab_size, vb.pp("lm_head"))?
+             linear(cfg.hidden_size, cfg.vocab_size, vb.pp("lm_head"), cfg)?
         };
         
         Ok(Self {
@@ -298,6 +364,7 @@ impl Llama {
             lm_head,
             device: vb.device().clone(),
             dtype: vb.dtype(),
+            use_gradient_checkpointing: cfg.use_gradient_checkpointing,
         })
     }
 
@@ -305,7 +372,11 @@ impl Llama {
         let (_b_sz, _seq_len) = input_ids.dims2()?;
         let mut x = self.embed_tokens.forward(input_ids)?;
         for (i, layer) in self.layers.iter_mut().enumerate() {
-            x = layer.forward(&x, pos, cache, i)?;
+            if self.use_gradient_checkpointing {
+                x = layer.forward_checkpointed(&x, pos, cache, i)?;
+            } else {
+                x = layer.forward(&x, pos, cache, i)?;
+            }
         }
         let x = self.norm.forward(&x)?;
         // Return full sequence logits for training
