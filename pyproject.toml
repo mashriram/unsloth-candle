@@ -11,6 +11,11 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
+dependencies = [
+    "llama-cpp-python>=0.3.16",
+    "torch>=2.8.0",
+    "transformers>=4.57.6",
+]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

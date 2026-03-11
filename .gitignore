@@ -49,3 +49,5 @@ check_output.txt
 check_final.txt
 tmp/
 *.txt
+output/
+
