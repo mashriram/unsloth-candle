@@ -15,7 +15,7 @@ def main():
     print("═" * 60)
 
     # 1. Path to the saved merged model
-    MODEL_DIR = "./output/hf_merged"
+    MODEL_DIR = os.path.abspath("./output/hf_merged")
     if not os.path.exists(MODEL_DIR):
         print(f"ERROR: Merged model directory not found at {MODEL_DIR}")
         sys.exit(1)
@@ -34,14 +34,22 @@ def main():
     print(f"\n── STEP 2: Running test question ──")
     question = "Explain how neural networks learn in one sentence."
     print(f"  Question: {question}")
-
+    
     # Tokenize input
     input_ids = tokenizer.encode(question)
     
-    # Run forward pass (just to see if it works)
-    print("  Running forward pass...")
-    result = model.forward(input_ids)
-    print(f"  ✓ Forward pass result: {result}")
+    # Run generation
+    print("  Generating response...")
+    from transformers import TextStreamer
+    import torch
+    
+    text_streamer = TextStreamer(tokenizer, skip_prompt=True)
+    _ = model.generate(
+        input_ids=torch.tensor([input_ids]),
+        streamer=text_streamer,
+        max_new_tokens=32
+    )
+    print()
 
     print(f"\n═{'═' * 60}")
     print("  ✅ Fine-tuned model verification complete!")

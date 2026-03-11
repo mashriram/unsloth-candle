@@ -59,6 +59,11 @@ pub fn load_model(
 ) -> Result<RustModel> {
     // 1. Download/Locate model using Python's huggingface_hub
     let model_dir = Python::with_gil(|py| -> PyResult<PathBuf> {
+        let model_path = std::path::Path::new(model_name);
+        if model_path.is_dir() {
+            return Ok(model_path.to_path_buf());
+        }
+
         let hf_hub = PyModule::import_bound(py, "huggingface_hub")?;
         let kwargs = pyo3::types::PyDict::new_bound(py);
         kwargs.set_item("repo_id", model_name)?;

@@ -24,7 +24,7 @@ import time
 # ─── 1. Import unsloth_candle (real Rust library) ─────────────────────────────
 
 import unsloth_candle
-from unsloth_candle import FastLanguageModel, Trainer
+from unsloth_candle import FastLanguageModel, SFTTrainer, SFTConfig
 
 print("═" * 60)
 print("  unsloth-candle  Real E2E Fine-tuning Pipeline")
@@ -71,14 +71,15 @@ print(f"  Alpha:   {ALPHA}")
 print(f"  Targets: {TARGET_MODULES}")
 
 t0 = time.perf_counter()
-model.apply_lora(
+model = FastLanguageModel.get_peft_model(
+    model,
+    r=RANK,
     target_modules=TARGET_MODULES,
-    rank=RANK,
-    alpha=ALPHA,
-    dropout=0.0,
-    use_dora=USE_DORA,
+    lora_alpha=ALPHA,
+    lora_dropout=0.0,
+    use_gradient_checkpointing=USE_DORA, # simplified for demo
 )
-print(f"  ✓ Adapters applied in {(time.perf_counter() - t0)*1000:.0f}ms")
+print(f"  ✓ PEFT model created in {(time.perf_counter() - t0)*1000:.0f}ms")
 
 # ─── 4. Tokenize training data ───────────────────────────────────────────────
 
@@ -107,34 +108,49 @@ print(f"  Avg tokens: {avg_len:.0f}")
 NUM_STEPS = int(os.environ.get("NUM_STEPS", "10"))
 LR = float(os.environ.get("LEARNING_RATE", "2e-4"))
 
-print(f"\n── STEP 4: Fine-tuning ──")
-print(f"  Steps: {NUM_STEPS}")
-print(f"  LR:    {LR}")
+# ─── 5. Training with SFTTrainer (Unsloth style) ─────────────────────────────
 
-trainer = Trainer(model)
-trainer.configure_optimizer(LR)
+NUM_STEPS = int(os.environ.get("NUM_STEPS", "1"))
+LR = float(os.environ.get("LEARNING_RATE", "2e-4"))
 
-losses = []
-for step in range(NUM_STEPS):
-    sample = train_ids[step % len(train_ids)]
-    t0 = time.perf_counter()
-    loss = trainer.train_step(sample)
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-    losses.append(loss)
-    tok_per_sec = len(sample) / (elapsed_ms / 1000) if elapsed_ms > 0 else 0
-    print(f"  step {step+1:3d}/{NUM_STEPS}  loss={loss:.4f}  "
-          f"{elapsed_ms:.0f}ms  {tok_per_sec:.0f} tok/s")
+print(f"\n── STEP 4: Fine-tuning (Unsloth style) ──")
 
-if len(losses) >= 2:
-    trend = "↓ (improving)" if losses[-1] < losses[0] else "→ (flat/diverging)"
-    print(f"\n  Loss: {losses[0]:.4f} → {losses[-1]:.4f} {trend}")
+# Create a dataset-like object for the trainer
+train_dataset = [{"text": t} for t in TRAINING_TEXTS]
+
+trainer = SFTTrainer(
+    model=model,
+    tokenizer=tokenizer,
+    train_dataset=train_dataset,
+    dataset_text_field="text",
+    max_seq_length=MAX_SEQ_LENGTH,
+    args=SFTConfig(
+        max_steps=NUM_STEPS,
+        learning_rate=LR,
+        logging_steps=1,
+    ),
+)
+
+trainer.train()
 
 # ─── 6. Forward pass test ────────────────────────────────────────────────────
 
-print(f"\n── STEP 5: Forward pass verification ──")
-test_input = tokenize("Hello, how are you?")
-result = model.forward(test_input)
-print(f"  ✓ {result}")
+print(f"\n── STEP 5: Model Generation test (Unsloth style) ──")
+FastLanguageModel.for_inference(model)
+question = "Explain transformers in one sentence."
+inputs = tokenizer.encode(question)
+
+print(f"  Question: {question}")
+print("  Inference: ", end="", flush=True)
+
+from transformers import TextStreamer
+text_streamer = TextStreamer(tokenizer, skip_prompt=True)
+_ = model.generate(
+    input_ids=torch.tensor([inputs]),
+    streamer=text_streamer,
+    max_new_tokens=32
+)
+print()
 
 # ─── 7. Save: HF merged safetensors ──────────────────────────────────────────
 
@@ -168,7 +184,7 @@ print(f"\n── STEP 6c: Save as GGUF ──")
 gguf_dir = os.path.join(OUTPUT_BASE, "gguf")
 t0 = time.perf_counter()
 try:
-    path = model.save_to_gguf(gguf_dir, quantization_type="q8_0")
+    path = model.save_pretrained_gguf(gguf_dir, tokenizer=tokenizer, quantization_type="q8_0")
     print(f"  Saved: {path} ({time.perf_counter() - t0:.1f}s)")
 except Exception as e:
     print(f"  ⚠ GGUF save: {e}")

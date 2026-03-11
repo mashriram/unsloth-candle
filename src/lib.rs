@@ -23,13 +23,15 @@ impl FastLanguageModel {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (model_name, max_seq_length=None, load_in_4bit=None, use_gradient_checkpointing=None))]
+    #[pyo3(signature = (model_name, max_seq_length=None, load_in_4bit=None, use_gradient_checkpointing=None, dtype=None, token=None))]
     fn from_pretrained(
         py: Python<'_>,
         model_name: &str,
         max_seq_length: Option<usize>,
         load_in_4bit: Option<bool>,
         use_gradient_checkpointing: Option<bool>,
+        dtype: Option<String>,
+        token: Option<String>,
     ) -> PyResult<(Self, PyObject)> {
         let load_4bit = load_in_4bit.unwrap_or(false);
         let grad_ckpt = use_gradient_checkpointing.unwrap_or(false);
@@ -46,9 +48,17 @@ impl FastLanguageModel {
 
         // Load model_dir and tokenizer via Python
         let (model_dir, tokenizer) = Python::with_gil(|py| -> PyResult<(PathBuf, PyObject)> {
-            let hf_hub = PyModule::import_bound(py, "huggingface_hub")?;
             let transformers = PyModule::import_bound(py, "transformers")?;
-            
+            let auto_tokenizer = transformers.getattr("AutoTokenizer")?;
+
+            let model_path = std::path::Path::new(model_name);
+            if model_path.is_dir() {
+                let model_dir = model_path.to_path_buf();
+                let tokenizer = auto_tokenizer.call_method1("from_pretrained", (model_name,))?;
+                return Ok((model_dir, tokenizer.into_py(py)));
+            }
+
+            let hf_hub = PyModule::import_bound(py, "huggingface_hub")?;
             let kwargs = pyo3::types::PyDict::new_bound(py);
             kwargs.set_item("repo_id", model_name)?;
             kwargs.set_item("allow_patterns", vec![
@@ -60,7 +70,6 @@ impl FastLanguageModel {
             let model_dir = PathBuf::from(path);
 
             // Load tokenizer using transformers (standard Unsloth behavior)
-            let auto_tokenizer = transformers.getattr("AutoTokenizer")?;
             let tokenizer = auto_tokenizer.call_method1("from_pretrained", (model_name,))?;
             
             Ok((model_dir, tokenizer.into_py(py)))
@@ -89,19 +98,47 @@ impl FastLanguageModel {
         Ok((flm, tokenizer))
     }
 
-    /// Run the forward pass. Returns logits as nested list.
-    fn forward(&mut self, x: Vec<u32>) -> PyResult<String> {
+    /// Run the forward pass. Returns the next predicted token ID (greedy).
+    #[pyo3(signature = (x, pos=0))]
+    fn forward(&mut self, x: Vec<u32>, pos: usize) -> PyResult<u32> {
         let state = self.inner.as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Model not loaded"))?;
         let mut state = state.lock().unwrap();
         let device = state.model.device().clone();
-        let input = Tensor::new(x, &device)
+        
+        let itensor = Tensor::new(x, &device)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
             .unsqueeze(0)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        let _res = state.model.forward(&input, None, 0)
+            
+        let logits = state.model.forward(&itensor, None, pos)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        Ok("Forward pass success".to_string())
+            
+        // Get the last token's logits
+        let s = logits.dims();
+        let last_logits = logits.narrow(1, s[1] - 1, 1)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
+            .squeeze(1)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
+            .squeeze(0)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            
+        let next_token = last_logits.argmax(0)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
+            .to_scalar::<u32>()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            
+        Ok(next_token)
+    }
+
+    /// Enable inference mode (clears cache, sets flags).
+    fn for_inference(&mut self) -> PyResult<()> {
+        let state = self.inner.as_ref()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Model not loaded"))?;
+        let mut state = state.lock().unwrap();
+        state.model.clear_cache();
+        println!("Inference mode enabled (KV cache cleared)");
+        Ok(())
     }
 
     /// Apply LoRA (or DoRA) adapters to the model.
