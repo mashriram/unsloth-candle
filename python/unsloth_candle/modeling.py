@@ -80,7 +80,7 @@ class ModelWrapper(nn.Module):
             tokenizer.save_pretrained(output_dir)
         return path
 
-    def save_pretrained_4bit(self, output_dir, tokenizer=None, **kwargs):
+    def save_in_4bit(self, output_dir, tokenizer=None, **kwargs):
         print(f"Saving 4-bit NF4 model to {output_dir}...")
         path = self.rust_flm.save_in_4bit(output_dir)
         if tokenizer:

@@ -66,15 +66,22 @@ class SFTTrainer:
         if not samples:
             samples = [[1, 2, 3, 4]]
 
-        loss = 0.0
+        all_losses = []
         for step in range(self.args.max_steps):
             t0 = time.perf_counter()
             sample = samples[step % len(samples)]
             loss = self.rust_trainer.train_step(sample)
+            all_losses.append(loss)
             elapsed = (time.perf_counter() - t0) * 1000
             
             if step % self.args.logging_steps == 0:
                 print(f"Step {step+1}/{self.args.max_steps} - loss: {loss:.4f} - {elapsed:.0f}ms")
         
         print("Training complete.")
-        return {"train_runtime": 0.0, "train_samples_per_second": 0.0, "total_flos": 0.0, "train_loss": loss}
+        return {
+            "train_runtime": 0.0, 
+            "train_samples_per_second": 0.0, 
+            "total_flos": 0.0, 
+            "train_loss": loss,
+            "losses": all_losses
+        }

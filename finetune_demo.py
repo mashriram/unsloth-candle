@@ -20,6 +20,7 @@ Usage:
 import os
 import sys
 import time
+import torch
 
 # ─── 1. Import unsloth_candle (real Rust library) ─────────────────────────────
 
@@ -103,17 +104,14 @@ avg_len = sum(len(ids) for ids in train_ids) / len(train_ids)
 print(f"  Samples: {len(train_ids)}")
 print(f"  Avg tokens: {avg_len:.0f}")
 
-# ─── 5. Training loop ────────────────────────────────────────────────────────
+# ─── 5. Training with SFTTrainer (Unsloth style) ─────────────────────────────
 
 NUM_STEPS = int(os.environ.get("NUM_STEPS", "10"))
 LR = float(os.environ.get("LEARNING_RATE", "2e-4"))
 
-# ─── 5. Training with SFTTrainer (Unsloth style) ─────────────────────────────
-
-NUM_STEPS = int(os.environ.get("NUM_STEPS", "1"))
-LR = float(os.environ.get("LEARNING_RATE", "2e-4"))
-
 print(f"\n── STEP 4: Fine-tuning (Unsloth style) ──")
+print(f"  Steps: {NUM_STEPS}")
+print(f"  LR:    {LR}")
 
 # Create a dataset-like object for the trainer
 train_dataset = [{"text": t} for t in TRAINING_TEXTS]
@@ -131,7 +129,8 @@ trainer = SFTTrainer(
     ),
 )
 
-trainer.train()
+trainer_stats = trainer.train()
+losses = trainer_stats["losses"]
 
 # ─── 6. Forward pass test ────────────────────────────────────────────────────
 
