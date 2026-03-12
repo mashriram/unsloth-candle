@@ -2,6 +2,13 @@
 name = "unsloth-candle"
 version = "0.1.0"
 edition = "2021"
+authors = ["Unsloth Team <team@unsloth.ai>", "Antigravity <antigravity@google.com>"]
+description = "High-performance LLM fine-tuning library built with Candle and Rust."
+license = "Apache-2.0"
+repository = "https://github.com/unslothai/unsloth-candle"
+readme = "README.md"
+keywords = ["llm", "finetuning", "lora", "qlora", "candle", "transformers"]
+categories = ["science", "emulators", "multimedia::video"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

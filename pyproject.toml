@@ -4,18 +4,40 @@ build-backend = "maturin"
 
 [project]
 name = "unsloth-candle"
+version = "0.1.0"
+description = "High-performance LLM fine-tuning library built with Candle and Rust."
+authors = [
+    { name = "Unsloth Communtiy", email = "mashriram@gmail.com" },
+]
+license = { text = "Apache-2.0" }
+readme = "README.md"
 requires-python = ">=3.9"
+keywords = ["llm", "finetuning", "lora", "qlora", "candle", "transformers", "rust"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Rust",
-    "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dynamic = ["version"]
 dependencies = [
-    "llama-cpp-python>=0.3.16",
-    "torch>=2.8.0",
-    "transformers>=4.57.6",
+    "torch>=2.4.0",
+    "transformers>=4.44.0",
+    "huggingface-hub>=0.23.0",
+    "safetensors>=0.4.0",
+    "llama-cpp-python>=0.3.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/unslothai/unsloth-candle"
+Repository = "https://github.com/unslothai/unsloth-candle"
+Issues = "https://github.com/unslothai/unsloth-candle/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
