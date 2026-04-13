@@ -38,11 +38,14 @@ impl FastLanguageModel {
         println!("Loading {}...", model_name);
 
         let device = Device::cuda_if_available(0)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            .unwrap_or(Device::Cpu);
 
         #[cfg(feature = "metal")]
-        let device = Device::new_metal(0)
-            .unwrap_or(Device::Cpu);
+        let device = if device.is_cpu() {
+            Device::new_metal(0).unwrap_or(Device::Cpu)
+        } else {
+            device
+        };
 
         println!("Using device: {:?}", device);
 
@@ -81,7 +84,7 @@ impl FastLanguageModel {
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
         ).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        let model = core::loader::load_model(model_name, load_4bit, grad_ckpt, &device)
+        let model = core::loader::load_model(model_name, load_4bit, grad_ckpt, &device, dtype)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         let state = ModelState {

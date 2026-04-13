@@ -114,7 +114,7 @@ impl ClipAttention {
         let k = k.reshape((b, s, self.num_heads, self.head_dim))?.transpose(1, 2)?;
         let v = v.reshape((b, s, self.num_heads, self.head_dim))?.transpose(1, 2)?;
         
-        let attn = (q.matmul(&k.t()?)? * self.scale)?;
+        let attn = (q.matmul(&k.transpose(candle_core::D::Minus2, candle_core::D::Minus1)?)? * self.scale)?;
         let attn = candle_nn::ops::softmax(&attn, candle_core::D::Minus1)?;
         let out = attn.matmul(&v)?;
         

@@ -70,8 +70,10 @@ fn merge_lora_into_weight(
     lora_b: &Tensor,
     scaling: f64,
 ) -> Result<Tensor> {
-    // lora_a: [rank, in_dim], lora_b: [out_dim, rank]
-    let delta = lora_b.matmul(lora_a)?;
+    let dev = base.device();
+    let lora_a = lora_a.to_device(dev)?;
+    let lora_b = lora_b.to_device(dev)?;
+    let delta = lora_b.matmul(&lora_a)?;
     let scaled_delta = (delta * scaling)?;
     // Cast base to F32 if needed for the merge
     let base_f32 = base.to_dtype(DType::F32)?;

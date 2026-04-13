@@ -51,3 +51,4 @@ tmp/
 *.txt
 output/
 
+finetune_test_output/

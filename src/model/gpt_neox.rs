@@ -93,7 +93,7 @@ impl GPTNeoXAttention {
     }
 
     fn forward(&self, x: &Tensor, pos: usize) -> Result<Tensor> {
-        let (b, seq, _hidden) = x.dims3()?;
+        let (b, seq, h_dim_in) = x.dims3()?;
         let qkv = self.query_key_value.forward(x)?;
         
         let qkv = qkv.reshape((b, seq, 3, self.num_attention_heads, self.head_dim))?
@@ -114,11 +114,11 @@ impl GPTNeoXAttention {
         let v = v.transpose(1, 2)?;
         
         let scale = 1.0 / (self.head_dim as f64).sqrt();
-        let att = (q.matmul(&k.t()?)? * scale)?;
+        let att = (q.matmul(&k.transpose(candle_core::D::Minus2, candle_core::D::Minus1)?)? * scale)?;
         let att = candle_nn::ops::softmax(&att, candle_core::D::Minus1)?;
         let y = att.matmul(&v)?;
         
-        let y = y.transpose(1, 2)?.reshape((b, seq, self.num_attention_heads * self.head_dim))?;
+        let y = y.transpose(1, 2)?.reshape((b, seq, h_dim_in))?;
         self.dense.forward(&y)
     }
 }

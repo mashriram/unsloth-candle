@@ -92,11 +92,9 @@ impl RotaryEmbedding {
     }
 
     fn forward(&self, x: &Tensor, pos: usize, seq_len: usize) -> Result<Tensor> {
-        let (_b, _s, _h, _d) = x.dims4()?;
         let cos = self.cos.narrow(0, pos, seq_len)?;
         let sin = self.sin.narrow(0, pos, seq_len)?;
-        unsloth_rs::kernels::rope_cubecl(x, &cos, &sin)
-            .map_err(|e| candle_core::Error::Msg(e.to_string()))
+        candle_nn::rotary_emb::rope(x, &cos, &sin)
     }
 }
 
@@ -140,7 +138,7 @@ impl CausalSelfAttention {
     }
 
     fn forward(&self, x: &Tensor, pos: usize, cache: &mut Cache, layer_idx: usize) -> Result<Tensor> {
-        let (b_sz, seq_len, hidden_size) = x.dims3()?;
+        let (b_sz, seq_len, h_dim_in) = x.dims3()?;
         
         let q = self.q_proj.forward(x)?;
         let k = self.k_proj.forward(x)?;
@@ -188,14 +186,14 @@ impl CausalSelfAttention {
              Self::naive_attn(&q, &k, &v, self.head_dim)?
         };
         
-        let y = y.reshape((b_sz, seq_len, hidden_size))?;
+        let y = y.reshape((b_sz, seq_len, h_dim_in))?;
         let y = self.o_proj.forward(&y)?;
         Ok(y)
     }
 
     fn naive_attn(q: &Tensor, k: &Tensor, v: &Tensor, head_dim: usize) -> Result<Tensor> {
         let scale = 1.0 / (head_dim as f64).sqrt();
-        let attn_weights = (q.matmul(&k.t()?)? * scale)?;
+        let attn_weights = (q.matmul(&k.transpose(candle_core::D::Minus2, candle_core::D::Minus1)?)? * scale)?;
         let attn_weights = candle_nn::ops::softmax(&attn_weights, candle_core::D::Minus1)?;
         let y = attn_weights.matmul(v)?; 
         y.transpose(1, 2) 
@@ -239,8 +237,7 @@ impl Mlp {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
         let gate = self.gate_proj.forward(x)?;
         let up = self.up_proj.forward(x)?;
-        let swiglu = unsloth_rs::kernels::swiglu_cubecl(&gate, &up)
-            .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+        let swiglu = (gate.silu()? * up)?;
         self.down_proj.forward(&swiglu)
     }
 }

@@ -90,8 +90,7 @@ impl Phi3RotaryEmbedding {
         // Handle overflow if pos + seq_len > max?
         let cos = self.cos.narrow(0, pos, seq_len)?;
         let sin = self.sin.narrow(0, pos, seq_len)?;
-        unsloth_rs::kernels::rope_cubecl(x, &cos, &sin)
-            .map_err(|e| candle_core::Error::Msg(e.to_string()))
+        candle_nn::rotary_emb::rope(x, &cos, &sin)
     }
 }
 
@@ -137,7 +136,7 @@ impl Phi3Attention {
     }
 
     fn forward(&self, x: &Tensor, pos: usize, cache: &mut Cache, layer_idx: usize) -> Result<Tensor> {
-        let (b_sz, seq_len, _) = x.dims3()?;
+        let (b_sz, seq_len, h_dim_in) = x.dims3()?;
         
         let qkv = self.qkv_proj.forward(x)?;
         
@@ -199,14 +198,14 @@ impl Phi3Attention {
              Self::naive_attn(&q, &k, &v, self.head_dim)?
         };
         
-        let y = y.reshape((b_sz, seq_len, self.num_attention_heads * self.head_dim))?;
+        let y = y.reshape((b_sz, seq_len, h_dim_in))?;
         let y = self.o_proj.forward(&y)?;
         Ok(y)
     }
 
     fn naive_attn(q: &Tensor, k: &Tensor, v: &Tensor, head_dim: usize) -> Result<Tensor> {
         let scale = 1.0 / (head_dim as f64).sqrt();
-        let attn_weights = (q.matmul(&k.t()?)? * scale)?;
+        let attn_weights = (q.matmul(&k.transpose(candle_core::D::Minus2, candle_core::D::Minus1)?)? * scale)?;
         let attn_weights = candle_nn::ops::softmax(&attn_weights, candle_core::D::Minus1)?;
         let y = attn_weights.matmul(v)?; 
         y.transpose(1, 2) 
@@ -250,8 +249,7 @@ impl Phi3MLP {
         let gate = gate_up.narrow(candle_core::D::Minus1, 0, self.intermediate_size)?;
         let up = gate_up.narrow(candle_core::D::Minus1, self.intermediate_size, self.intermediate_size)?;
         
-        let swiglu = unsloth_rs::kernels::swiglu_cubecl(&gate, &up)
-            .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+        let swiglu = (gate.silu()? * up)?;
         self.down_proj.forward(&swiglu)
     }
 }

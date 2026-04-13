@@ -65,8 +65,7 @@ impl RotaryEmbedding {
     fn forward(&self, x: &Tensor, pos: usize, seq_len: usize) -> Result<Tensor> {
         let cos = self.cos.narrow(0, pos, seq_len)?;
         let sin = self.sin.narrow(0, pos, seq_len)?;
-        unsloth_rs::kernels::rope_cubecl(x, &cos, &sin)
-            .map_err(|e| candle_core::Error::Msg(e.to_string()))
+        candle_nn::rotary_emb::rope(x, &cos, &sin)
     }
 }
 
@@ -99,7 +98,7 @@ impl StarCoder2Attention {
     }
 
     fn forward(&self, x: &Tensor, pos: usize, cache: &mut Cache, layer_idx: usize) -> Result<Tensor> {
-        let (b, s, _) = x.dims3()?;
+        let (b, s, h_dim_in) = x.dims3()?;
         let q = self.q_proj.forward(x)?.reshape((b, s, self.num_heads, self.head_dim))?.transpose(1, 2)?.contiguous()?;
         let k = self.k_proj.forward(x)?.reshape((b, s, self.num_kv_heads, self.head_dim))?.transpose(1, 2)?.contiguous()?;
         let v = self.v_proj.forward(x)?.reshape((b, s, self.num_kv_heads, self.head_dim))?.transpose(1, 2)?.contiguous()?;
@@ -122,8 +121,8 @@ impl StarCoder2Attention {
         let k = if n_rep > 1 { let (bk,nk,sk,dk) = k.dims4()?; k.unsqueeze(2)?.expand((bk,nk,n_rep,sk,dk))?.reshape((bk,nk*n_rep,sk,dk))? } else { k };
         let v = if n_rep > 1 { let (bv,nv,sv,dv) = v.dims4()?; v.unsqueeze(2)?.expand((bv,nv,n_rep,sv,dv))?.reshape((bv,nv*n_rep,sv,dv))? } else { v };
         let scale = 1.0 / (self.head_dim as f64).sqrt();
-        let attn = candle_nn::ops::softmax(&(q.matmul(&k.t()?)? * scale)?, candle_core::D::Minus1)?;
-        attn.matmul(&v)?.transpose(1, 2)?.reshape((b, s, self.num_heads * self.head_dim)).and_then(|y| self.o_proj.forward(&y))
+        let attn = candle_nn::ops::softmax(&(q.matmul(&k.transpose(candle_core::D::Minus2, candle_core::D::Minus1)?)? * scale)?, candle_core::D::Minus1)?;
+        attn.matmul(&v)?.transpose(1, 2)?.reshape((b, s, h_dim_in)).and_then(|y| self.o_proj.forward(&y))
     }
 }
 

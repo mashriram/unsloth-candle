@@ -94,8 +94,7 @@ impl RotaryEmbedding {
         let (_b, _s, _h, _d) = x.dims4()?;
         let cos = self.cos.narrow(0, pos, seq_len)?;
         let sin = self.sin.narrow(0, pos, seq_len)?;
-        unsloth_rs::kernels::rope_cubecl(x, &cos, &sin)
-            .map_err(|e| candle_core::Error::Msg(e.to_string()))
+        candle_nn::rotary_emb::rope(x, &cos, &sin)
     }
 }
 
@@ -142,7 +141,7 @@ impl Gemma2Attention {
     }
     
     fn forward(&self, x: &Tensor, pos: usize, cache: &mut Cache, layer_idx: usize) -> Result<Tensor> {
-        let (b, s, _) = x.dims3()?;
+        let (b, s, h_dim_in) = x.dims3()?;
         
         let q = self.q_proj.forward(x)?;
         let k = self.k_proj.forward(x)?;
@@ -176,7 +175,7 @@ impl Gemma2Attention {
         
         // Attention calculation
         let scale = 1.0 / (self.head_dim as f64).sqrt();
-        let att = (q.matmul(&k.t()?)? * scale)?;
+        let att = (q.matmul(&k.transpose(candle_core::D::Minus2, candle_core::D::Minus1)?)? * scale)?;
         
         let att = if let Some(cap) = self.softcap {
              // Softcapping: cap * tanh(x / cap)
@@ -224,7 +223,7 @@ impl Gemma2Attention {
          let att = candle_nn::ops::softmax(&att, candle_core::D::Minus1)?;
         let y = att.matmul(&v)?;
         
-        let y = y.transpose(1, 2)?.reshape((b, s, self.num_heads * self.head_dim))?;
+        let y = y.transpose(1, 2)?.reshape((b, s, h_dim_in))?;
         self.o_proj.forward(&y)
     }
     

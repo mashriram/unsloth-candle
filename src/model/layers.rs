@@ -59,14 +59,11 @@ impl LoRALinear {
 
 impl Module for LoRALinear {
     fn forward(&self, xs: &Tensor) -> Result<Tensor> {
-        // y = base(x) + (x @ A.T @ B.T) * scaling
+        // y = base_linear(x) + (x @ lora_a.T @ lora_b.T) * scaling
         let base_out = self.base.forward(xs)?;
         
-        let lora_a_t = self.lora_a.t()?.contiguous()?;
-        let lora_a_out = xs.broadcast_matmul(&lora_a_t)?;
-        
-        let lora_b_t = self.lora_b.t()?.contiguous()?;
-        let lora_out = lora_a_out.broadcast_matmul(&lora_b_t)?;
+        let lora_a_out = xs.broadcast_matmul(&self.lora_a.t()?)?;
+        let lora_out = lora_a_out.broadcast_matmul(&self.lora_b.t()?)?;
                          
         let scaled = (lora_out * self.scaling)?;
         
@@ -148,7 +145,12 @@ impl UnslothRmsNorm {
     }
     
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        unsloth_rs::kernels::rmsnorm_cubecl(x, &self.weight, self.eps)
-            .map_err(|e| candle_core::Error::Msg(e.to_string()))
+        let dim = x.dim(candle_core::D::Minus1)?;
+        let squared_sum = x.sqr()?.sum_keepdim(candle_core::D::Minus1)?;
+        // mean over last dim: sum / dim
+        let norm = (squared_sum / (dim as f64))?;
+        let norm_eps = (norm + self.eps)?;
+        let inv_norm = norm_eps.sqrt()?.recip()?;
+        x.broadcast_mul(&inv_norm)?.broadcast_mul(&self.weight)
     }
 }

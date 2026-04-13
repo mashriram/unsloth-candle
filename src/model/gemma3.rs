@@ -103,8 +103,7 @@ impl RotaryEmbedding {
     fn forward(&self, x: &Tensor, pos: usize, seq_len: usize) -> Result<Tensor> {
         let cos = self.cos.narrow(0, pos, seq_len)?;
         let sin = self.sin.narrow(0, pos, seq_len)?;
-        unsloth_rs::kernels::rope_cubecl(x, &cos, &sin)
-            .map_err(|e| candle_core::Error::Msg(e.to_string()))
+        candle_nn::rotary_emb::rope(x, &cos, &sin)
     }
 }
 
@@ -147,7 +146,7 @@ impl Gemma3Attention {
     }
 
     fn forward(&self, x: &Tensor, pos: usize, cache: &mut Cache, layer_idx: usize) -> Result<Tensor> {
-        let (b, s, _) = x.dims3()?;
+        let (b, s, h_dim_in) = x.dims3()?;
         let q = self.q_proj.forward(x)?.reshape((b, s, self.num_heads, self.head_dim))?.transpose(1, 2)?.contiguous()?;
         let k = self.k_proj.forward(x)?.reshape((b, s, self.num_kv_heads, self.head_dim))?.transpose(1, 2)?.contiguous()?;
         let v = self.v_proj.forward(x)?.reshape((b, s, self.num_kv_heads, self.head_dim))?.transpose(1, 2)?.contiguous()?;
@@ -180,14 +179,14 @@ impl Gemma3Attention {
         let v = repeat_kv(v, self.num_heads / self.num_kv_heads)?;
 
         let scale = 1.0 / (self.head_dim as f64).sqrt();
-        let attn = (q.matmul(&k.t()?)? * scale)?;
+        let attn = (q.matmul(&k.transpose(candle_core::D::Minus2, candle_core::D::Minus1)?)? * scale)?;
 
         let attn = if let Some(cap) = self.softcap {
             (attn / cap)?.tanh()?.affine(cap, 0.0)?
         } else { attn };
 
         let attn = candle_nn::ops::softmax(&attn, candle_core::D::Minus1)?;
-        attn.matmul(&v)?.transpose(1, 2)?.reshape((b, s, self.num_heads * self.head_dim)).and_then(|y| self.o_proj.forward(&y))
+        attn.matmul(&v)?.transpose(1, 2)?.reshape((b, s, h_dim_in)).and_then(|y| self.o_proj.forward(&y))
     }
 }
 

@@ -12,12 +12,15 @@ pub type Result<T> = std::result::Result<T, UnslothError>;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum UnslothError {
+    /// Errors from the Candle framework.
     #[error("Candle error: {0}")]
     Candle(#[from] candle_core::Error),
 
+    /// CPU fallback required for operation (not implemented for CPU).
     #[error("CPU fallback required for {0}")]
     CpuFallback(String),
 
+    /// Custom error message.
     #[error("Custom error: {0}")]
     Custom(String),
 

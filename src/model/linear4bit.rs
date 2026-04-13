@@ -56,7 +56,7 @@ impl Linear4bit {
         // weight: [out_features, in_features]
         // output: [batch, seq, out_features]
         
-        let x = x.matmul(&weight.t()?)?;
+        let x = x.broadcast_matmul(&weight.t()?)?;
         
         // 3. Bias
         match &self.bias {

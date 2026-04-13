@@ -55,7 +55,8 @@ pub fn load_model(
     model_name: &str,
     load_in_4bit: bool,
     use_gradient_checkpointing: bool,
-    device: &Device
+    device: &Device,
+    requested_dtype: Option<String>
 ) -> Result<RustModel> {
     // 1. Download/Locate model using Python's huggingface_hub
     let model_dir = Python::with_gil(|py| -> PyResult<PathBuf> {
@@ -90,9 +91,16 @@ pub fn load_model(
 
     // 4. Determine dtype
     // CPU cannot do BF16/F16 matmul — always use F32
-    // GPU can use the model's preferred dtype
+    // GPU can use the model's preferred dtype, or what the user asked for via Python.
     let dtype = if device.is_cpu() {
         DType::F32
+    } else if let Some(req) = requested_dtype {
+        match req.to_lowercase().as_str() {
+            "bf16" | "bfloat16" => DType::BF16,
+            "f16" | "float16" => DType::F16,
+            "f32" | "float32" => DType::F32,
+            _ => DType::F32,
+        }
     } else if load_in_4bit {
         DType::BF16
     } else {

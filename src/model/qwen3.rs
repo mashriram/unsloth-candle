@@ -84,8 +84,7 @@ impl RotaryEmbedding {
     fn forward(&self, x: &Tensor, pos: usize, seq_len: usize) -> Result<Tensor> {
         let cos = self.cos.narrow(0, pos, seq_len)?;
         let sin = self.sin.narrow(0, pos, seq_len)?;
-        unsloth_rs::kernels::rope_cubecl(x, &cos, &sin)
-            .map_err(|e| candle_core::Error::Msg(e.to_string()))
+        candle_nn::rotary_emb::rope(x, &cos, &sin)
     }
 }
 
@@ -124,7 +123,7 @@ impl Qwen3Attention {
     }
 
     fn forward(&self, x: &Tensor, pos: usize, cache: &mut Cache, layer_idx: usize) -> Result<Tensor> {
-        let (b, s, _) = x.dims3()?;
+        let (b, s, h_dim_in) = x.dims3()?;
 
         let q = self.q_proj.forward(x)?.reshape((b, s, self.num_heads, self.head_dim))?.transpose(1, 2)?.contiguous()?;
         let k = self.k_proj.forward(x)?.reshape((b, s, self.num_kv_heads, self.head_dim))?.transpose(1, 2)?.contiguous()?;
@@ -150,9 +149,9 @@ impl Qwen3Attention {
         let v = self.repeat_kv(v)?;
 
         let scale = 1.0 / (self.head_dim as f64).sqrt();
-        let attn = (q.matmul(&k.t()?)? * scale)?;
+        let attn = (q.matmul(&k.transpose(candle_core::D::Minus2, candle_core::D::Minus1)?)? * scale)?;
         let attn = candle_nn::ops::softmax(&attn, candle_core::D::Minus1)?;
-        let y = attn.matmul(&v)?.transpose(1, 2)?.reshape((b, s, self.num_heads * self.head_dim))?;
+        let y = attn.matmul(&v)?.transpose(1, 2)?.reshape((b, s, h_dim_in))?;
         self.o_proj.forward(&y)
     }
 
@@ -184,8 +183,7 @@ impl Qwen3MLP {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
         let gate = self.gate_proj.forward(x)?;
         let up = self.up_proj.forward(x)?;
-        let swiglu = unsloth_rs::kernels::swiglu_cubecl(&gate, &up)
-            .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+        let swiglu = (gate.silu()? * up)?;
         self.down_proj.forward(&swiglu)
     }
 }

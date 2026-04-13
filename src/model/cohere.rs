@@ -92,7 +92,7 @@ impl CohereAttention {
     }
     
     fn forward(&self, x: &Tensor, pos: usize) -> Result<Tensor> {
-        let (b, s, _) = x.dims3()?;
+        let (b, s, h_dim_in) = x.dims3()?;
         let q = self.q_proj.forward(x)?;
         let k = self.k_proj.forward(x)?;
         let v = self.v_proj.forward(x)?;
@@ -113,7 +113,7 @@ impl CohereAttention {
         let att = candle_nn::ops::softmax(&att, candle_core::D::Minus1)?;
         let y = att.matmul(&v)?;
         
-        let y = y.transpose(1, 2)?.reshape((b, s, self.num_heads * self.head_dim))?;
+        let y = y.transpose(1, 2)?.reshape((b, s, h_dim_in))?;
         self.o_proj.forward(&y)
     }
     
