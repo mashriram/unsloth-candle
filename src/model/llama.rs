@@ -25,6 +25,7 @@ pub struct Config {
 }
 
 use crate::model::layers::{AdapterLayer, UnslothRmsNorm};
+pub use crate::core::cache::{Cache, CacheState, KVQuantization};
 
 // Helper to create Linear layer (no bias usually for Llama)
 fn linear(size1: usize, size2: usize, vb: VarBuilder, cfg: &Config) -> Result<AdapterLayer> {
@@ -39,19 +40,7 @@ fn linear(size1: usize, size2: usize, vb: VarBuilder, cfg: &Config) -> Result<Ad
 }
 
 #[derive(Clone)]
-pub struct Cache {
-    pub kvs: Vec<Option<(Tensor, Tensor)>>,
-    pub use_kv_cache: bool,
-}
 
-impl Cache {
-    pub fn new(use_kv_cache: bool, num_layers: usize) -> Self {
-        Self {
-            kvs: vec![None; num_layers],
-            use_kv_cache,
-        }
-    }
-}
 
 // ... RotaryEmbedding ...
 struct RotaryEmbedding {
@@ -151,20 +140,8 @@ impl CausalSelfAttention {
         let q = self.rotary_emb.forward(&q, pos, seq_len)?;
         let k = self.rotary_emb.forward(&k, pos, seq_len)?;
 
-        let (k, v) = if cache.use_kv_cache {
-            let (k, v) = match &cache.kvs[layer_idx] {
-                Some((prev_k, prev_v)) => {
-                    let k = Tensor::cat(&[prev_k, &k], 2)?;
-                    let v = Tensor::cat(&[prev_v, &v], 2)?;
-                    (k, v)
-                }
-                None => (k, v),
-            };
-            cache.kvs[layer_idx] = Some::<(Tensor, Tensor)>((k.clone(), v.clone()));
-            (k, v)
-        } else {
-            (k, v)
-        };
+        let (k, v) = cache.append_and_fetch(layer_idx, &k, &v)?;
+
 
         let k = self.repeat_kv(k)?;
         let v = self.repeat_kv(v)?;

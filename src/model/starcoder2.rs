@@ -104,14 +104,8 @@ impl StarCoder2Attention {
         let v = self.v_proj.forward(x)?.reshape((b, s, self.num_kv_heads, self.head_dim))?.transpose(1, 2)?.contiguous()?;
         let q = self.rope.forward(&q, pos, s)?;
         let k = self.rope.forward(&k, pos, s)?;
-        let (k, v) = if cache.use_kv_cache {
-            let (k, v) = match &cache.kvs[layer_idx] {
-                Some((pk, pv)) => (Tensor::cat(&[pk, &k], 2)?, Tensor::cat(&[pv, &v], 2)?),
-                None => (k, v),
-            };
-            cache.kvs[layer_idx] = Some((k.clone(), v.clone()));
-            (k, v)
-        } else { (k, v) };
+        let (k, v) = cache.append_and_fetch(layer_idx, &k, &v)?;
+
         let (k, v) = if let Some(window) = self.sliding_window {
             let total = k.dim(2)?;
             if total > window { (k.narrow(2, total - window, window)?, v.narrow(2, total - window, window)?) }
@@ -244,6 +238,12 @@ impl StarCoder2Model {
         self.model.forward(input_ids, pos, &mut self.cache)
     }
     pub fn clear_cache(&mut self) { self.cache = Cache::new(true, self.config.num_hidden_layers); }
+
+    pub fn configure_cache(&mut self, q: crate::core::cache::KVQuantization, rotor: bool) {
+        self.cache.quantization = q;
+        self.cache.use_rotor = rotor;
+        self.clear_cache();
+    }
     pub fn apply_lora(&mut self, target: Vec<String>, rank: usize, alpha: f64, dropout: f64, use_dora: bool) -> Result<()> {
         self.model.apply_lora(target, rank, alpha, dropout, use_dora, &mut self.varmap)
     }

@@ -150,6 +150,7 @@ class FastLanguageModel:
         return model
 
     @staticmethod
-    def for_inference(model):
-        model.rust_flm.for_inference()
+    def for_inference(model, kv_quantization="none", use_rotor=False, **kwargs):
+        model.rust_flm.for_inference(kv_quantization, use_rotor)
         model.is_inference = True
+

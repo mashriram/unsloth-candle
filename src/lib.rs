@@ -135,11 +135,20 @@ impl FastLanguageModel {
     }
 
     /// Enable inference mode (clears cache, sets flags).
-    fn for_inference(&mut self) -> PyResult<()> {
+    #[pyo3(signature = (kv_quantization=None, use_rotor=None))]
+    fn for_inference(&mut self, kv_quantization: Option<String>, use_rotor: Option<bool>) -> PyResult<()> {
         let state = self.inner.as_ref()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Model not loaded"))?;
         let mut state = state.lock().unwrap();
-        state.model.clear_cache();
+        let q_str = kv_quantization.unwrap_or("none".to_string());
+        let q = match q_str.to_lowercase().as_str() {
+            "q4_0" | "q4" | "4bit" => core::cache::KVQuantization::Q4_0,
+            "q8_0" | "q8" | "8bit" => core::cache::KVQuantization::Q8_0,
+            _ => core::cache::KVQuantization::None,
+        };
+        let rotor = use_rotor.unwrap_or(false);
+        state.model.configure_cache(q, rotor);
+
         println!("Inference mode enabled (KV cache cleared)");
         Ok(())
     }

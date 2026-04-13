@@ -131,14 +131,8 @@ impl Qwen3MoeAttention {
         let k = self.k_norm.forward(&k)?;
         let q = self.rope.forward(&q, pos, s)?;
         let k = self.rope.forward(&k, pos, s)?;
-        let (k, v) = if cache.use_kv_cache {
-            let (k, v) = match &cache.kvs[layer_idx] {
-                Some((pk, pv)) => (Tensor::cat(&[pk, &k], 2)?, Tensor::cat(&[pv, &v], 2)?),
-                None => (k, v),
-            };
-            cache.kvs[layer_idx] = Some((k.clone(), v.clone()));
-            (k, v)
-        } else { (k, v) };
+        let (k, v) = cache.append_and_fetch(layer_idx, &k, &v)?;
+
         let k = repeat_kv(k, self.num_heads / self.num_kv_heads)?;
         let v = repeat_kv(v, self.num_heads / self.num_kv_heads)?;
         let scale = 1.0 / (self.head_dim as f64).sqrt();
@@ -416,6 +410,12 @@ impl Qwen3MoeModel {
 
     pub fn clear_cache(&mut self) {
         self.cache = Cache::new(true, self.config.num_hidden_layers);
+    }
+
+    pub fn configure_cache(&mut self, q: crate::core::cache::KVQuantization, rotor: bool) {
+        self.cache.quantization = q;
+        self.cache.use_rotor = rotor;
+        self.clear_cache();
     }
 
     pub fn apply_lora(&mut self, target: Vec<String>, rank: usize, alpha: f64, dropout: f64, use_dora: bool) -> Result<()> {

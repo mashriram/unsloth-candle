@@ -111,7 +111,10 @@ print(f"  ✓ Training completed! Final loss: {losses[-1] if losses else 'N/A'}"
 
 # 5. Generation Test
 print(f"\n[STEP 5] Testing explicit generation")
-FastLanguageModel.for_inference(model)
+import subprocess
+print("Initial GPU Memory:", subprocess.getoutput("nvidia-smi --query-gpu=memory.used --format=csv,noheader"))
+
+FastLanguageModel.for_inference(model, kv_quantization="4bit", use_rotor=True)
 
 question = "What is the capital of India?"
 inputs = tokenizer.encode(question)
@@ -127,8 +130,10 @@ _ = model.generate(
     max_new_tokens=20
 )
 print()
+print("Final GPU Memory (4-bit KV Cache enabled):", subprocess.getoutput("nvidia-smi --query-gpu=memory.used --format=csv,noheader"))
 
 # 6. Saving Options
+
 OUTPUT_BASE = "./finetune_test_output"
 os.makedirs(OUTPUT_BASE, exist_ok=True)
 

@@ -281,4 +281,6 @@ impl GPTNeoXModel {
     }
     
     pub fn clear_cache(&mut self) {}
+
+    pub fn configure_cache(&mut self, _q: crate::core::cache::KVQuantization, _rotor: bool) {}
 }

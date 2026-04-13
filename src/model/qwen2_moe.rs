@@ -233,4 +233,10 @@ impl Qwen2MoeModel {
     pub fn clear_cache(&mut self) {
         self.cache = Cache::new(true, self.config.num_hidden_layers);
     }
+
+    pub fn configure_cache(&mut self, q: crate::core::cache::KVQuantization, rotor: bool) {
+        self.cache.quantization = q;
+        self.cache.use_rotor = rotor;
+        self.clear_cache();
+    }
 }

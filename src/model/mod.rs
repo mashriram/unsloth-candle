@@ -151,6 +151,31 @@ impl RustModel {
         }
     }
 
+    pub fn configure_cache(&mut self, q: crate::core::cache::KVQuantization, rotor: bool) {
+        match self {
+            Self::Llama(m) => m.configure_cache(q.clone(), rotor),
+            Self::Mixtral(m) => m.configure_cache(q.clone(), rotor),
+            Self::Qwen2(m) => m.configure_cache(q.clone(), rotor),
+            Self::Gemma(m) => m.configure_cache(q.clone(), rotor),
+            Self::Phi3(m) => m.configure_cache(q.clone(), rotor),
+            Self::Llava(m) => m.configure_cache(q.clone(), rotor),
+            Self::Qwen2VL(m) => m.configure_cache(q.clone(), rotor),
+            Self::GPTNeoX(m) => m.configure_cache(q.clone(), rotor),
+            Self::Cohere(m) => m.configure_cache(q.clone(), rotor),
+            Self::Qwen2Moe(m) => m.configure_cache(q.clone(), rotor),
+            Self::Mistral(m) => m.configure_cache(q.clone(), rotor),
+            Self::Qwen3(m) => m.configure_cache(q.clone(), rotor),
+            Self::Qwen3Moe(m) => m.configure_cache(q.clone(), rotor),
+            Self::Gemma3(m) => m.configure_cache(q.clone(), rotor),
+            Self::Granite(m) => m.configure_cache(q.clone(), rotor),
+            Self::Olmo(m) => m.configure_cache(q.clone(), rotor),
+            Self::StarCoder2(m) => m.configure_cache(q.clone(), rotor),
+            Self::Phi4(m) => m.configure_cache(q.clone(), rotor),
+            Self::SarvamMoe(m) => m.configure_cache(q.clone(), rotor),
+            Self::DeepSeekV2(m) => m.configure_cache(q.clone(), rotor),
+        }
+    }
+
     pub fn device(&self) -> &Device {
         match self {
             Self::Llama(m) => &m.device,
@@ -238,8 +263,15 @@ impl LlamaModel {
     }
 
     pub fn clear_cache(&mut self) {
-        self.cache = Cache::new(true, self.config.num_hidden_layers);
+        self.cache = crate::core::cache::Cache::new(true, self.config.num_hidden_layers);
     }
+
+    pub fn configure_cache(&mut self, q: crate::core::cache::KVQuantization, rotor: bool) {
+        self.cache.quantization = q;
+        self.cache.use_rotor = rotor;
+        self.clear_cache();
+    }
+
 
     pub fn apply_lora(&mut self, target_modules: Vec<String>, rank: usize, alpha: f64, dropout: f64, use_dora: bool) -> Result<()> {
         self.model.apply_lora(target_modules, rank, alpha, dropout, use_dora, &mut self.varmap)

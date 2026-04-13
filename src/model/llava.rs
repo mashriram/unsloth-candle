@@ -166,6 +166,12 @@ impl LlavaModel {
     pub fn clear_cache(&mut self) {
          self.cache = Cache::new(true, self.config.text_config.num_hidden_layers);
     }
+
+    pub fn configure_cache(&mut self, q: crate::core::cache::KVQuantization, rotor: bool) {
+        self.cache.quantization = q;
+        self.cache.use_rotor = rotor;
+        self.clear_cache();
+    }
     
     pub fn apply_lora(&mut self, target_modules: Vec<String>, rank: usize, alpha: f64, dropout: f64, use_dora: bool) -> Result<()> {
          // Apply LoRA to language model

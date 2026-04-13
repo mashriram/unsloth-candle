@@ -102,14 +102,8 @@ impl GraniteAttention {
         let v = self.v_proj.forward(x)?.reshape((b, s, self.num_kv_heads, self.head_dim))?.transpose(1, 2)?.contiguous()?;
         let q = self.rope.forward(&q, pos, s)?;
         let k = self.rope.forward(&k, pos, s)?;
-        let (k, v) = if cache.use_kv_cache {
-            let (k, v) = match &cache.kvs[layer_idx] {
-                Some((pk, pv)) => (Tensor::cat(&[pk, &k], 2)?, Tensor::cat(&[pv, &v], 2)?),
-                None => (k, v),
-            };
-            cache.kvs[layer_idx] = Some((k.clone(), v.clone()));
-            (k, v)
-        } else { (k, v) };
+        let (k, v) = cache.append_and_fetch(layer_idx, &k, &v)?;
+
         let n_rep = self.num_heads / self.num_kv_heads;
         let k = if n_rep > 1 { let (bk, nk, sk, dk) = k.dims4()?; k.unsqueeze(2)?.expand((bk, nk, n_rep, sk, dk))?.reshape((bk, nk * n_rep, sk, dk))? } else { k };
         let v = if n_rep > 1 { let (bv, nv, sv, dv) = v.dims4()?; v.unsqueeze(2)?.expand((bv, nv, n_rep, sv, dv))?.reshape((bv, nv * n_rep, sv, dv))? } else { v };
@@ -252,6 +246,12 @@ impl GraniteModel {
         self.model.forward(input_ids, pos, &mut self.cache)
     }
     pub fn clear_cache(&mut self) { self.cache = Cache::new(true, self.config.num_hidden_layers); }
+
+    pub fn configure_cache(&mut self, q: crate::core::cache::KVQuantization, rotor: bool) {
+        self.cache.quantization = q;
+        self.cache.use_rotor = rotor;
+        self.clear_cache();
+    }
     pub fn apply_lora(&mut self, target: Vec<String>, rank: usize, alpha: f64, dropout: f64, use_dora: bool) -> Result<()> {
         self.model.apply_lora(target, rank, alpha, dropout, use_dora, &mut self.varmap)
     }

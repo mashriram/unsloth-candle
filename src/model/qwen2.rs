@@ -126,20 +126,8 @@ impl Qwen2Attention {
         let q = self.rotary_emb.forward(&q, pos, seq_len)?;
         let k = self.rotary_emb.forward(&k, pos, seq_len)?;
 
-        let (k, v) = if cache.use_kv_cache {
-            let (k, v) = match &cache.kvs[layer_idx] {
-                Some((prev_k, prev_v)) => {
-                    let k = Tensor::cat(&[prev_k, &k], 2)?;
-                    let v = Tensor::cat(&[prev_v, &v], 2)?;
-                    (k, v)
-                }
-                None => (k, v),
-            };
-            cache.kvs[layer_idx] = Some::<(Tensor, Tensor)>((k.clone(), v.clone()));
-            (k, v)
-        } else {
-            (k, v)
-        };
+        let (k, v) = cache.append_and_fetch(layer_idx, &k, &v)?;
+
 
         let k = self.repeat_kv(k)?;
         let v = self.repeat_kv(v)?;
@@ -350,6 +338,12 @@ impl Qwen2Model {
     
     pub fn clear_cache(&mut self) {
          self.cache = Cache::new(true, self.config.num_hidden_layers);
+    }
+
+    pub fn configure_cache(&mut self, q: crate::core::cache::KVQuantization, rotor: bool) {
+        self.cache.quantization = q;
+        self.cache.use_rotor = rotor;
+        self.clear_cache();
     }
 
     pub fn apply_lora(&mut self, target_modules: Vec<String>, rank: usize, alpha: f64, dropout: f64, use_dora: bool) -> Result<()> {
