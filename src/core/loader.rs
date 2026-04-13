@@ -298,12 +298,29 @@ pub fn load_model(
             Ok(RustModel::DeepSeekV2(crate::model::deepseek_v2::DeepSeekV2Model::new(model, cfg, device.clone(), dtype, varmap)))
         }
 
+        // ─── Gemma 4 (text-only path; multimodal vision handled separately) ──────
+        "Gemma4ForCausalLM" | "Gemma4ForConditionalGeneration" => {
+            let cfg: crate::model::gemma4::Config = serde_json::from_value(json)
+                .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+            let model = crate::model::gemma4::Gemma4::load(vb, &cfg)?;
+            Ok(RustModel::Gemma4(crate::model::gemma4::Gemma4Model::new(model, cfg, device.clone(), dtype, varmap)))
+        }
+
+        // ─── Qwen3.5 dense ──────────────────────────────────────────────────────
+        "Qwen3_5ForCausalLM" | "Qwen3_5ForConditionalGeneration" => {
+            let cfg: crate::model::qwen35::Config = serde_json::from_value(json)
+                .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+            let model = crate::model::qwen3::Qwen3::load(vb, &cfg)?;
+            Ok(RustModel::Qwen35(crate::model::qwen35::Qwen35Model::new(model, cfg, device.clone(), dtype, varmap)))
+        }
+
         // ─── Unknown ─────────────────────────────────────────────────────────────
         _ => Err(candle_core::Error::Msg(format!(
             "Unsupported architecture: '{}'. Supported: LlamaForCausalLM, MistralForCausalLM, \
             MixtralForCausalLM, Qwen2ForCausalLM, Qwen3ForCausalLM, Qwen3MoeForCausalLM, \
-            Qwen2MoeForCausalLM, Gemma2ForCausalLM, GemmaForCausalLM, Phi3ForCausalLM, \
-            Phi4ForCausalLM, LlavaForConditionalGeneration, Qwen2VLForConditionalGeneration, \
+            Qwen3_5ForCausalLM, Qwen2MoeForCausalLM, Gemma2ForCausalLM, GemmaForCausalLM, \
+            Gemma3ForCausalLM, Gemma4ForCausalLM, Phi3ForCausalLM, Phi4ForCausalLM, \
+            LlavaForConditionalGeneration, Qwen2VLForConditionalGeneration, \
             GPTNeoXForCausalLM, CohereForCausalLM, GraniteForCausalLM, SarvamMoEForCausalLM, \
             OlmoForCausalLM, Starcoder2ForCausalLM, DeepseekV2ForCausalLM", arch
         ))),

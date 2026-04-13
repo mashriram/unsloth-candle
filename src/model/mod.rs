@@ -16,12 +16,14 @@ use crate::model::mistral::MistralModel;
 use crate::model::qwen3::Qwen3Model;
 use crate::model::qwen3_moe::Qwen3MoeModel;
 use crate::model::gemma3::Gemma3Model;
+use crate::model::gemma4::Gemma4Model;
 use crate::model::granite::GraniteModel;
 use crate::model::olmo::OlmoModel;
 use crate::model::starcoder2::StarCoder2Model;
 use crate::model::phi4::Phi4Model;
 use crate::model::sarvam_moe::SarvamMoeModel;
 use crate::model::deepseek_v2::DeepSeekV2Model;
+use crate::model::qwen35::Qwen35Model;
 
 pub mod layers;
 pub mod linear4bit;
@@ -41,12 +43,14 @@ pub mod mistral;
 pub mod qwen3;
 pub mod qwen3_moe;
 pub mod gemma3;
+pub mod gemma4;
 pub mod granite;
 pub mod olmo;
 pub mod starcoder2;
 pub mod phi4;
 pub mod sarvam_moe;
 pub mod deepseek_v2;
+pub mod qwen35;
 
 pub use self::layers::{AdapterLayer, LoRALinear, DoRALinear};
 
@@ -67,12 +71,14 @@ pub enum RustModel {
     Qwen3(Qwen3Model),
     Qwen3Moe(Qwen3MoeModel),
     Gemma3(Gemma3Model),
+    Gemma4(Gemma4Model),
     Granite(GraniteModel),
     Olmo(OlmoModel),
     StarCoder2(StarCoder2Model),
     Phi4(Phi4Model),
     SarvamMoe(SarvamMoeModel),
     DeepSeekV2(DeepSeekV2Model),
+    Qwen35(Qwen35Model),
 }
 
 impl RustModel {
@@ -98,6 +104,8 @@ impl RustModel {
             Self::Phi4(m) => m.forward(input_ids, pos),
             Self::SarvamMoe(m) => m.forward(input_ids, pos),
             Self::DeepSeekV2(m) => m.forward(input_ids, pos),
+            Self::Gemma4(m) => m.forward(input_ids, pos),
+            Self::Qwen35(m) => m.forward(input_ids, pos),
         }
     }
 
@@ -123,6 +131,8 @@ impl RustModel {
             Self::Phi4(m) => m.apply_lora(target_modules, rank, alpha, dropout, use_dora),
             Self::SarvamMoe(m) => m.apply_lora(target_modules, rank, alpha, dropout, use_dora),
             Self::DeepSeekV2(m) => m.apply_lora(target_modules, rank, alpha, dropout, use_dora),
+            Self::Gemma4(m) => m.apply_lora(target_modules, rank, alpha, dropout, use_dora),
+            Self::Qwen35(m) => m.apply_lora(target_modules, rank, alpha, dropout, use_dora),
         }
     }
 
@@ -148,6 +158,8 @@ impl RustModel {
             Self::Phi4(m) => m.clear_cache(),
             Self::SarvamMoe(m) => m.clear_cache(),
             Self::DeepSeekV2(m) => m.clear_cache(),
+            Self::Gemma4(m) => m.clear_cache(),
+            Self::Qwen35(m) => m.clear_cache(),
         }
     }
 
@@ -173,6 +185,8 @@ impl RustModel {
             Self::Phi4(m) => m.configure_cache(q.clone(), rotor),
             Self::SarvamMoe(m) => m.configure_cache(q.clone(), rotor),
             Self::DeepSeekV2(m) => m.configure_cache(q.clone(), rotor),
+            Self::Gemma4(m) => m.configure_cache(q.clone(), rotor),
+            Self::Qwen35(m) => m.configure_cache(q.clone(), rotor),
         }
     }
 
@@ -198,6 +212,8 @@ impl RustModel {
             Self::Phi4(m) => &m.device,
             Self::SarvamMoe(m) => &m.device,
             Self::DeepSeekV2(m) => &m.device,
+            Self::Gemma4(m) => &m.device,
+            Self::Qwen35(m) => &m.device,
         }
     }
 
@@ -223,6 +239,8 @@ impl RustModel {
             Self::Phi4(m) => &m.varmap,
             Self::SarvamMoe(m) => &m.varmap,
             Self::DeepSeekV2(m) => &m.varmap,
+            Self::Gemma4(m) => &m.varmap,
+            Self::Qwen35(m) => &m.varmap,
         }
     }
 }
